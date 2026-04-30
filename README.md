@@ -3,7 +3,7 @@
 Prototype web 3D orienté **vertical slice MMORPG light**.
 
 ## Version
-- `0.3.0` — phase 3 lite
+- `0.4.0` — phase 4 lite
 
 ## Ce qu'il y a dedans
 - 1 zone jouable : **Whispering Grove**
@@ -19,6 +19,9 @@ Prototype web 3D orienté **vertical slice MMORPG light**.
 - impacts visuels, bursts et morts plus lisibles
 - axe caméra horizontal + vertical inversé pour une visée plus naturelle
 - XP, niveau, montée de stats de base
+- inventaire visible et vrai loot récupérable
+- second type d’ennemi: loups ronces
+- mini PNJ avec quête plus MMO
 
 ## Lancer
 ```bash

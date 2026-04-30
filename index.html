@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Flow - 0.3.0</title>
+<title>Flow - 0.4.0</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -83,6 +83,33 @@
     letter-spacing: 0.08em;
   }
   #quest-card p, #quest-card small { color: var(--muted); line-height: 1.45; }
+  #inventory-panel {
+    position: absolute;
+    top: 250px;
+    left: 16px;
+    width: 260px;
+    padding: 14px 16px;
+    border-radius: 18px;
+  }
+  #inventory-panel h2 {
+    font-size: 12px;
+    color: var(--gold);
+    margin-bottom: 8px;
+    letter-spacing: 0.08em;
+  }
+  #inventory-list {
+    list-style: none;
+    display: grid;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  #inventory-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  #inventory-list strong { color: var(--text); font-size: 12px; }
   #target-frame {
     position: absolute;
     top: 92px;
@@ -249,7 +276,8 @@
     100% { opacity: 0; transform: translate(-50%, -46px); }
   }
   @media (max-width: 900px) {
-    #quest-card, #combat-log, #controls { width: calc(100vw - 32px); }
+    #quest-card, #inventory-panel, #combat-log, #controls { width: calc(100vw - 32px); }
+    #inventory-panel { top: 250px; }
     #combat-log { bottom: 186px; }
     #controls { display: none; }
     #resource-row { grid-template-columns: 1fr 1fr; }
@@ -259,12 +287,16 @@
 </head>
 <body>
 <div id="hud">
-  <div id="version" class="glass">FLOW v0.3.0</div>
-  <div id="zone-card" class="glass"><strong>WHISPERING GROVE</strong><span>Phase 3 lite · caméra full inversée, XP, level up, progression</span></div>
+  <div id="version" class="glass">FLOW v0.4.0</div>
+  <div id="zone-card" class="glass"><strong>WHISPERING GROVE</strong><span>Phase 4 lite · inventaire, loot réel, nouveau monstre, PNJ</span></div>
   <div id="quest-card" class="glass">
     <h2>OBJECTIF</h2>
-    <p>Purifie le bosquet en éliminant <strong id="quest-progress">0 / 3</strong> wisps corrompus.</p>
-    <small>Le sanctuaire au cristal te remet en forme. T pour cibler, clic gauche pour frapper.</small>
+    <p id="quest-text">Parle à Lys puis élimine <strong id="quest-progress">0 / 3</strong> wisps corrompus et <strong id="wolf-progress">0 / 2</strong> loups ronces.</p>
+    <small id="quest-subtext">Le sanctuaire au cristal te remet en forme. T pour cibler, clic gauche pour frapper.</small>
+  </div>
+  <div id="inventory-panel" class="glass">
+    <h2>INVENTAIRE</h2>
+    <ul id="inventory-list"></ul>
   </div>
   <div id="target-frame" class="glass">
     <strong id="target-name">Aucune cible</strong>
@@ -305,12 +337,19 @@
     T · cibler le plus proche<br />
     Clic gauche · attaque de base<br />
     1 / 2 / 3 · skills<br />
-    F · interaction sanctuaire
+    F · interaction / parler
   </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
+  const ITEM_DEFS = {
+    soulShard: { name: 'Éclat d’âme', kind: 'ressource' },
+    wispCore: { name: 'Noyau de wisp', kind: 'craft' },
+    barkFang: { name: 'Croc de ronce', kind: 'craft' },
+    groveCharm: { name: 'Charme du bosquet', kind: 'quest' },
+  };
+
   const hud = {
     playerHpFill: document.getElementById('player-hp-fill'),
     playerManaFill: document.getElementById('player-mana-fill'),
@@ -320,11 +359,15 @@
     levelText: document.getElementById('level-text'),
     xpText: document.getElementById('xp-text'),
     xpFill: document.getElementById('xp-fill'),
+    inventoryList: document.getElementById('inventory-list'),
     targetFrame: document.getElementById('target-frame'),
     targetName: document.getElementById('target-name'),
     targetType: document.getElementById('target-type'),
     targetHp: document.getElementById('target-hp'),
+    questText: document.getElementById('quest-text'),
     questProgress: document.getElementById('quest-progress'),
+    wolfProgress: document.getElementById('wolf-progress'),
+    questSubtext: document.getElementById('quest-subtext'),
     toast: document.getElementById('toast'),
     hitFlash: document.getElementById('hit-flash'),
     logList: document.getElementById('log-list'),
@@ -358,9 +401,12 @@
     toastTimer: 0,
     soul: 0,
     kills: 0,
+    wolfKills: 0,
     xp: 0,
     xpToNext: 60,
     level: 1,
+    inventory: { soulShard: 0, wispCore: 0, barkFang: 0, groveCharm: 0 },
+    questState: 'talkToLys',
     selectedTargetId: null,
     targetSwitchTimer: 0,
     cameraShake: 0,
@@ -384,6 +430,7 @@
   const hostileProjectiles = [];
   const friendlyProjectiles = [];
   const effectBursts = [];
+  const npcs = [];
   const mobs = [];
   const lootOrbs = [];
   const clock = new THREE.Clock();
@@ -454,6 +501,16 @@
 
   function triggerShake(amount = 0.2) {
     world.cameraShake = Math.max(world.cameraShake, amount);
+  }
+
+  function addItem(itemId, amount = 1) {
+    world.inventory[itemId] = (world.inventory[itemId] || 0) + amount;
+    const item = ITEM_DEFS[itemId];
+    addLog(`+${amount} ${item?.name || itemId}.`);
+  }
+
+  function hasQuestObjectives() {
+    return world.kills >= 3 && world.wolfKills >= 2;
   }
 
   function createGround() {
@@ -649,6 +706,45 @@
     return { shrine, light, crystal, ring };
   }
 
+  function createLysNpc() {
+    const group = new THREE.Group();
+    const robe = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.36, 0.5, 1.4, 10),
+      new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.72 })
+    );
+    robe.position.y = 0.75;
+    robe.castShadow = true;
+    group.add(robe);
+
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.28, 14, 12),
+      new THREE.MeshStandardMaterial({ color: 0xf5d0a9, roughness: 0.85 })
+    );
+    head.position.y = 1.75;
+    head.castShadow = true;
+    group.add(head);
+
+    const staff = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.05, 1.8, 8),
+      new THREE.MeshStandardMaterial({ color: 0x8b5e3c, roughness: 0.9 })
+    );
+    staff.position.set(0.42, 1, 0);
+    staff.rotation.z = -0.08;
+    staff.castShadow = true;
+    group.add(staff);
+
+    const gem = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.14, 0),
+      new THREE.MeshStandardMaterial({ color: 0xf0abfc, emissive: 0xa21caf, emissiveIntensity: 0.9 })
+    );
+    gem.position.set(0.42, 1.9, 0);
+    group.add(gem);
+
+    group.position.set(-10, 0, 12);
+    scene.add(group);
+    npcs.push({ id: 'lys', name: 'Lys', role: 'Gardienne du bosquet', group, interactRange: 4.5 });
+  }
+
   function createWisp(id, x, z, variant) {
     const group = new THREE.Group();
     const color = variant === 'violet' ? 0xc084fc : variant === 'cyan' ? 0x67e8f9 : 0xf9a8d4;
@@ -696,13 +792,90 @@
       aggroRange: 12,
       leash: new THREE.Vector3(x, 1.5, z),
       lootValue: 1,
+      lootTable: [
+        { itemId: 'wispCore', chance: 0.7, amount: 1 },
+        { itemId: 'soulShard', chance: 1, amount: 1 },
+      ],
+      family: 'wisp',
       timeOffset: Math.random() * Math.PI * 2,
     };
     mobs.push(mob);
     return mob;
   }
 
-  function createLootOrb(position) {
+  function createBrambleWolf(id, x, z) {
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.5, 1.4, 10),
+      new THREE.MeshStandardMaterial({ color: 0x3f5a3c, roughness: 0.95 })
+    );
+    body.rotation.z = Math.PI / 2;
+    body.position.y = 0.95;
+    body.castShadow = true;
+    group.add(body);
+
+    const head = new THREE.Mesh(
+      new THREE.ConeGeometry(0.34, 0.72, 8),
+      new THREE.MeshStandardMaterial({ color: 0x2f3e2e, roughness: 0.95 })
+    );
+    head.rotation.z = -Math.PI / 2;
+    head.position.set(0.88, 1.02, 0);
+    head.castShadow = true;
+    group.add(head);
+
+    for (const offset of [-0.45, -0.1, 0.1, 0.45]) {
+      const leg = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.09, 0.75, 6),
+        new THREE.MeshStandardMaterial({ color: 0x2c241c, roughness: 1 })
+      );
+      leg.position.set(offset, 0.4, offset > 0 ? 0.2 : -0.2);
+      leg.castShadow = true;
+      group.add(leg);
+    }
+
+    const eye = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xf59e0b })
+    );
+    eye.position.set(1.08, 1.08, 0.12);
+    group.add(eye);
+    const eye2 = eye.clone();
+    eye2.position.z *= -1;
+    group.add(eye2);
+
+    group.position.set(x, 0, z);
+    scene.add(group);
+
+    const mob = {
+      id,
+      name: `Loup ronce ${id}`,
+      type: 'Prédateur du bosquet',
+      group,
+      core: eye,
+      halo: head,
+      tail: body,
+      maxHp: 62,
+      hp: 62,
+      speed: 3.3,
+      attackCooldown: 0,
+      castCooldown: 99,
+      attackRange: 1.85,
+      alive: true,
+      aggroRange: 15,
+      leash: new THREE.Vector3(x, 0, z),
+      lootValue: 2,
+      lootTable: [
+        { itemId: 'barkFang', chance: 0.85, amount: 1 },
+        { itemId: 'soulShard', chance: 1, amount: 1 },
+      ],
+      family: 'wolf',
+      timeOffset: Math.random() * Math.PI * 2,
+    };
+    mobs.push(mob);
+    return mob;
+  }
+
+  function createLootOrb(position, lootItems = []) {
     const mesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(0.24, 0),
       new THREE.MeshStandardMaterial({ color: 0xfcd34d, emissive: 0xf59e0b, emissiveIntensity: 0.85, roughness: 0.25 })
@@ -710,12 +883,39 @@
     mesh.position.copy(position);
     mesh.position.y = 0.9;
     scene.add(mesh);
-    lootOrbs.push({ mesh, age: 0 });
+    lootOrbs.push({ mesh, age: 0, lootItems });
+  }
+
+  function rollLoot(mob) {
+    const rolled = [];
+    (mob.lootTable || []).forEach(entry => {
+      if (Math.random() <= entry.chance) {
+        rolled.push({ itemId: entry.itemId, amount: entry.amount || 1 });
+      }
+    });
+    if (world.questState === 'returnToLys' && !world.inventory.groveCharm) {
+      rolled.push({ itemId: 'groveCharm', amount: 1 });
+    }
+    return rolled;
   }
 
   function updateQuest() {
     hud.questProgress.textContent = `${world.kills} / 3`;
-    if (world.kills >= 3) showToast('Phase 1 validée: la boucle de base tient déjà debout.');
+    hud.wolfProgress.textContent = `${world.wolfKills} / 2`;
+
+    if (world.questState === 'talkToLys') {
+      hud.questText.innerHTML = `Parle à <strong>Lys</strong> près du sanctuaire pour lancer la chasse.`;
+      hud.questSubtext.textContent = 'Approche-la puis appuie sur F. Ensuite, nettoie le bosquet.';
+    } else if (world.questState === 'hunt') {
+      hud.questText.innerHTML = `Aide Lys : élimine <strong id="quest-progress">${world.kills} / 3</strong> wisps corrompus et <strong id="wolf-progress">${world.wolfKills} / 2</strong> loups ronces.`;
+      hud.questSubtext.textContent = 'Ramasse les drops. Les loups lâchent des crocs, les wisps des noyaux.';
+    } else if (world.questState === 'returnToLys') {
+      hud.questText.innerHTML = `Retourne voir <strong>Lys</strong> avec les trophées. ${hasQuestObjectives() ? 'Tu as fait le boulot.' : 'Il manque encore des cibles.'}`;
+      hud.questSubtext.textContent = 'F près de Lys pour rendre la quête et recevoir sa bénédiction.';
+    } else {
+      hud.questText.innerHTML = `Lys te reconnaît comme protecteur du bosquet.`;
+      hud.questSubtext.textContent = 'Continue de farmer, de monter de niveau et d’accumuler du loot.';
+    }
   }
 
   function grantXp(amount, source = 'progression') {
@@ -729,6 +929,7 @@
       playerState.maxHp += 18;
       playerState.maxMana += 14;
       playerState.basicDamage += 3;
+      playerState.speed += 0.1;
       playerState.hp = playerState.maxHp;
       playerState.mana = playerState.maxMana;
       spawnNovaBurst(player.position.clone().add(new THREE.Vector3(0, 1.6, 0)), 0xfcd34d, 2.1);
@@ -756,10 +957,13 @@
 
   const player = createPlayer();
   const sanctuary = createSanctuary();
+  createLysNpc();
   createWisp(1, -6, -8, 'cyan');
   createWisp(2, 6, -14, 'violet');
   createWisp(3, -14, 4, 'pink');
   createWisp(4, 12, -2, 'cyan');
+  createBrambleWolf(1, 16, 12);
+  createBrambleWolf(2, -18, -6);
 
   const fireflies = [];
   for (let i = 0; i < 28; i += 1) {
@@ -814,16 +1018,23 @@
     if (mob.hp <= 0) {
       mob.alive = false;
       mob.group.visible = false;
-      createLootOrb(mob.group.position);
+      const lootItems = rollLoot(mob);
+      createLootOrb(mob.group.position, lootItems);
       world.soul += mob.lootValue;
-      world.kills += 1;
-      grantXp(22, mob.name);
+      if (mob.family === 'wisp') world.kills += 1;
+      if (mob.family === 'wolf') world.wolfKills += 1;
+      grantXp(mob.family === 'wolf' ? 34 : 22, mob.name);
       updateQuest();
       spawnNovaBurst(mob.group.position.clone().add(new THREE.Vector3(0, 1.1, 0)), mob.core.material.color.getHex(), 1.8);
       spawnImpactBurst(mob.group.position.clone(), mob.core.material.color.getHex(), 2.1);
       addLog(`${mob.name} explose en poussière astrale.`);
       showToast(`+${mob.lootValue} âme · ${mob.name} vaincu`);
       triggerShake(0.22);
+      if (world.questState === 'hunt' && hasQuestObjectives()) {
+        world.questState = 'returnToLys';
+        updateQuest();
+        showToast('Objectifs remplis. Retourne voir Lys.');
+      }
       if (world.selectedTargetId === mob.id) setTarget(null);
     }
   }
@@ -916,6 +1127,34 @@
     addLog('Le cristal te remet d’équerre.');
   }
 
+  function interactNpc() {
+    const lys = npcs[0];
+    if (!lys) return false;
+    const distance = lys.group.position.distanceTo(player.position);
+    if (distance > lys.interactRange) return false;
+
+    if (world.questState === 'talkToLys') {
+      world.questState = 'hunt';
+      updateQuest();
+      showToast('Lys: nettoie le bosquet et reviens me voir.');
+      addLog('Lys te confie une vraie mission. Enfin un peu de MMO.');
+    } else if (world.questState === 'returnToLys' && hasQuestObjectives()) {
+      world.questState = 'completed';
+      addItem('groveCharm', 1);
+      grantXp(48, 'quête de Lys');
+      showToast('Quête terminée: Lys te confie un Charme du bosquet.');
+      addLog('Lys: ce charme est à toi. Le bosquet se souviendra.');
+      playerState.maxMana += 10;
+      playerState.mana = playerState.maxMana;
+      updateQuest();
+    } else if (world.questState === 'completed') {
+      showToast('Lys: continue, le bosquet a encore faim de héros.');
+    } else {
+      showToast('Lys: il reste encore des bêtes à purger.');
+    }
+    return true;
+  }
+
   function updateHud() {
     hud.playerHpFill.style.transform = `scaleX(${playerState.hp / playerState.maxHp})`;
     hud.playerManaFill.style.transform = `scaleX(${playerState.mana / playerState.maxMana})`;
@@ -925,6 +1164,11 @@
     hud.levelText.textContent = world.level;
     hud.xpText.textContent = `${Math.round(world.xp)} / ${world.xpToNext}`;
     hud.xpFill.style.transform = `scaleX(${Math.max(0, Math.min(1, world.xp / world.xpToNext))})`;
+
+    hud.inventoryList.innerHTML = Object.entries(world.inventory)
+      .filter(([, amount]) => amount > 0)
+      .map(([itemId, amount]) => `<li><strong>${ITEM_DEFS[itemId]?.name || itemId}</strong><span>x${amount}</span></li>`)
+      .join('') || '<li><span>Vide pour l’instant.</span><span>—</span></li>';
 
     const target = getSelectedTarget();
     if (target) {
@@ -963,7 +1207,9 @@
     if (event.code === 'Digit1') castArcPulse();
     if (event.code === 'Digit2') castStarBolt();
     if (event.code === 'Digit3') castSanctify();
-    if (event.code === 'KeyF') interactSanctuary();
+    if (event.code === 'KeyF') {
+      if (!interactNpc()) interactSanctuary();
+    }
   });
   document.addEventListener('keyup', event => { keys[event.code] = false; });
   document.addEventListener('mousemove', event => {
@@ -1046,8 +1292,13 @@
       if (!mob.alive) return;
       mob.core.scale.lerp(new THREE.Vector3(1, 1, 1), 0.14);
       mob.group.position.y = 1.5 + Math.sin(elapsed * 2.5 + mob.timeOffset) * 0.2;
-      mob.halo.rotation.z += delta * 1.5;
-      mob.tail.rotation.z = Math.sin(elapsed * 2.6 + mob.timeOffset) * 0.22;
+      if (mob.family === 'wisp') {
+        mob.halo.rotation.z += delta * 1.5;
+        mob.tail.rotation.z = Math.sin(elapsed * 2.6 + mob.timeOffset) * 0.22;
+      } else {
+        mob.group.position.y = Math.sin(elapsed * 5 + mob.timeOffset) * 0.05;
+        mob.group.rotation.y += delta * 0.6;
+      }
       mob.attackCooldown = Math.max(0, mob.attackCooldown - delta);
       mob.castCooldown = Math.max(0, mob.castCooldown - delta);
 
@@ -1059,10 +1310,11 @@
           dir.normalize();
           mob.group.position.addScaledVector(dir, mob.speed * delta);
         } else if (mob.attackCooldown <= 0) {
-          mob.attackCooldown = 1.6 + Math.random() * 0.35;
-          applyDamageToPlayer(6, mob.name);
+          mob.attackCooldown = mob.family === 'wolf' ? 1.05 + Math.random() * 0.2 : 1.6 + Math.random() * 0.35;
+          spawnImpactBurst(player.position.clone(), mob.family === 'wolf' ? 0xf59e0b : mob.core.material.color.getHex(), mob.family === 'wolf' ? 1.6 : 1.2);
+          applyDamageToPlayer(mob.family === 'wolf' ? 10 : 6, mob.name);
         }
-        if (mob.castCooldown <= 0 && distance < 9) {
+        if (mob.family === 'wisp' && mob.castCooldown <= 0 && distance < 9) {
           mob.castCooldown = 3.8 + Math.random() * 1.2;
           const projectile = new THREE.Mesh(
             new THREE.SphereGeometry(0.14, 10, 10),
@@ -1131,6 +1383,7 @@
       if (orb.mesh.position.distanceTo(player.position) < 1.7) {
         world.soul += 2;
         grantXp(8, 'orbe d’âme');
+        orb.lootItems.forEach(item => addItem(item.itemId, item.amount));
         spawnFloatingText('+2 âmes', orb.mesh.position.clone(), 'loot-pop');
         addLog('Tu absorbes une orbe d’âme.');
         scene.remove(orb.mesh);
@@ -1208,8 +1461,8 @@
   }
 
   updateQuest();
-  addLog('Le bosquet respire. À toi de le nettoyer.');
-  showToast('Phase 3 lite: caméra full inversée, XP et level up en place.');
+  addLog('Le bosquet respire. Lys t’attend près du sanctuaire.');
+  showToast('Phase 4 lite: inventaire, loot, nouveau monstre, PNJ.');
   camera.position.set(0, 5.4, 19);
   camera.lookAt(player.position.x, player.position.y + 1.8, player.position.z);
   animate();
