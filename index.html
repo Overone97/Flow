@@ -261,11 +261,25 @@ canvas { display: block; }
   createRock(20, 25, 1.8);
 
   const player = new THREE.Group();
-  const bodyGeo = new THREE.CapsuleGeometry(0.4, 1.2, 8, 16);
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0x4a90d9, roughness: 0.6, metalness: 0.2 });
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.castShadow = true;
-  body.position.y = 1.2;
+  const body = new THREE.Group();
+
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 1.2, 12), bodyMat);
+  torso.castShadow = true;
+  torso.position.y = 1.2;
+  body.add(torso);
+
+  const torsoTop = new THREE.Mesh(new THREE.SphereGeometry(0.42, 14, 10), bodyMat);
+  torsoTop.castShadow = true;
+  torsoTop.position.y = 1.8;
+  body.add(torsoTop);
+
+  const torsoBottom = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), bodyMat);
+  torsoBottom.castShadow = true;
+  torsoBottom.position.y = 0.6;
+  torsoBottom.scale.y = 0.7;
+  body.add(torsoBottom);
+
   player.add(body);
 
   const headGeo = new THREE.SphereGeometry(0.35, 16, 12);
@@ -293,11 +307,25 @@ canvas { display: block; }
   scene.add(player);
 
   const enemy = new THREE.Group();
-  const eBodyGeo = new THREE.CapsuleGeometry(0.6, 1.5, 8, 16);
   const eBodyMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.5, metalness: 0.3 });
-  const eBody = new THREE.Mesh(eBodyGeo, eBodyMat);
-  eBody.castShadow = true;
-  eBody.position.y = 1.4;
+  const eBody = new THREE.Group();
+
+  const eTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, 1.5, 12), eBodyMat);
+  eTorso.castShadow = true;
+  eTorso.position.y = 1.4;
+  eBody.add(eTorso);
+
+  const eTorsoTop = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 10), eBodyMat);
+  eTorsoTop.castShadow = true;
+  eTorsoTop.position.y = 2.15;
+  eBody.add(eTorsoTop);
+
+  const eTorsoBottom = new THREE.Mesh(new THREE.SphereGeometry(0.72, 14, 10), eBodyMat);
+  eTorsoBottom.castShadow = true;
+  eTorsoBottom.position.y = 0.65;
+  eTorsoBottom.scale.y = 0.7;
+  eBody.add(eTorsoBottom);
+
   enemy.add(eBody);
 
   const eHeadGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
