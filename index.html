@@ -90,6 +90,7 @@
     width: 260px;
     padding: 14px 16px;
     border-radius: 18px;
+    background: linear-gradient(180deg, rgba(18, 26, 44, 0.72), rgba(8, 14, 28, 0.62));
   }
   #inventory-panel h2 {
     font-size: 12px;
@@ -110,6 +111,67 @@
     gap: 12px;
   }
   #inventory-list strong { color: var(--text); font-size: 12px; }
+  #equipment-grid {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .equip-slot {
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    min-height: 58px;
+    display: grid;
+    gap: 4px;
+  }
+  .equip-slot span {
+    font-size: 11px;
+    color: var(--gold);
+    letter-spacing: 0.05em;
+  }
+  .equip-slot strong {
+    font-size: 12px;
+    color: var(--text);
+  }
+  #dialogue-box {
+    position: absolute;
+    left: 50%;
+    bottom: 146px;
+    transform: translateX(-50%);
+    width: min(720px, calc(100vw - 32px));
+    padding: 16px 18px;
+    border-radius: 20px;
+    opacity: 0;
+    transition: 0.2s ease;
+  }
+  #dialogue-box.visible {
+    opacity: 1;
+  }
+  #dialogue-box strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--accent-2);
+    letter-spacing: 0.06em;
+    font-size: 12px;
+  }
+  #dialogue-box p {
+    color: var(--text);
+    line-height: 1.45;
+    font-size: 14px;
+  }
+  #zone-hint {
+    position: absolute;
+    top: 180px;
+    right: 16px;
+    width: 240px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
   #target-frame {
     position: absolute;
     top: 92px;
@@ -297,6 +359,12 @@
   <div id="inventory-panel" class="glass">
     <h2>INVENTAIRE</h2>
     <ul id="inventory-list"></ul>
+    <div id="equipment-grid">
+      <div class="equip-slot"><span>ARME</span><strong id="equip-weapon">Lame du flux</strong></div>
+      <div class="equip-slot"><span>RELIQUE</span><strong id="equip-relic">Aucune</strong></div>
+      <div class="equip-slot"><span>CHARME</span><strong id="equip-charm">Aucun</strong></div>
+      <div class="equip-slot"><span>TROPHÉE</span><strong id="equip-trophy">Vide</strong></div>
+    </div>
   </div>
   <div id="target-frame" class="glass">
     <strong id="target-name">Aucune cible</strong>
@@ -306,6 +374,7 @@
   <div id="crosshair"></div>
   <div id="toast"></div>
   <div id="hit-flash"></div>
+  <div id="dialogue-box" class="glass"><strong id="dialogue-name">—</strong><p id="dialogue-text">—</p></div>
   <div id="bottom-ui">
     <div id="resource-frame" class="glass">
       <div id="resource-row">
@@ -339,6 +408,7 @@
     1 / 2 / 3 · skills<br />
     F · interaction / parler
   </div>
+  <div id="zone-hint" class="glass"><strong style="display:block; color:var(--accent); margin-bottom:6px;">Biomes</strong>Traverse le portail cyan à l’est pour basculer dans <em>Moonpetal Basin</em>.</div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -360,6 +430,10 @@
     xpText: document.getElementById('xp-text'),
     xpFill: document.getElementById('xp-fill'),
     inventoryList: document.getElementById('inventory-list'),
+    equipWeapon: document.getElementById('equip-weapon'),
+    equipRelic: document.getElementById('equip-relic'),
+    equipCharm: document.getElementById('equip-charm'),
+    equipTrophy: document.getElementById('equip-trophy'),
     targetFrame: document.getElementById('target-frame'),
     targetName: document.getElementById('target-name'),
     targetType: document.getElementById('target-type'),
@@ -370,6 +444,9 @@
     questSubtext: document.getElementById('quest-subtext'),
     toast: document.getElementById('toast'),
     hitFlash: document.getElementById('hit-flash'),
+    dialogueBox: document.getElementById('dialogue-box'),
+    dialogueName: document.getElementById('dialogue-name'),
+    dialogueText: document.getElementById('dialogue-text'),
     logList: document.getElementById('log-list'),
     skillBasic: document.getElementById('skill-basic'),
     skillQ: document.getElementById('skill-q'),
@@ -406,7 +483,9 @@
     xpToNext: 60,
     level: 1,
     inventory: { soulShard: 0, wispCore: 0, barkFang: 0, groveCharm: 0 },
+    equipment: { weapon: 'Lame du flux', relic: null, charm: null, trophy: null },
     questState: 'talkToLys',
+    currentZone: 'whispering-grove',
     selectedTargetId: null,
     targetSwitchTimer: 0,
     cameraShake: 0,
@@ -433,6 +512,7 @@
   const npcs = [];
   const mobs = [];
   const lootOrbs = [];
+  const portals = [];
   const clock = new THREE.Clock();
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -503,10 +583,24 @@
     world.cameraShake = Math.max(world.cameraShake, amount);
   }
 
+  function setDialogue(name, text, duration = 3.5) {
+    hud.dialogueName.textContent = name;
+    hud.dialogueText.textContent = text;
+    hud.dialogueBox.classList.add('visible');
+    clearTimeout(setDialogue._timer);
+    setDialogue._timer = setTimeout(() => hud.dialogueBox.classList.remove('visible'), duration * 1000);
+  }
+
   function addItem(itemId, amount = 1) {
     world.inventory[itemId] = (world.inventory[itemId] || 0) + amount;
     const item = ITEM_DEFS[itemId];
     addLog(`+${amount} ${item?.name || itemId}.`);
+  }
+
+  function syncEquipmentFromInventory() {
+    if (world.inventory.groveCharm > 0) world.equipment.charm = 'Charme du bosquet';
+    if (world.inventory.wispCore > 0) world.equipment.relic = 'Noyau de wisp';
+    if (world.inventory.barkFang > 0) world.equipment.trophy = 'Croc de ronce';
   }
 
   function hasQuestObjectives() {
@@ -538,6 +632,21 @@
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.03;
     scene.add(ring);
+
+    const eastPortal = new THREE.Group();
+    const base = new THREE.Mesh(
+      new THREE.TorusGeometry(1.9, 0.16, 12, 48),
+      new THREE.MeshStandardMaterial({ color: 0x67e8f9, emissive: 0x0891b2, emissiveIntensity: 1.1 })
+    );
+    base.rotation.y = Math.PI / 2;
+    base.position.y = 2.2;
+    eastPortal.add(base);
+    const glow = new THREE.PointLight(0x67e8f9, 1.8, 10);
+    glow.position.y = 2.2;
+    eastPortal.add(glow);
+    eastPortal.position.set(24, 0, 0);
+    scene.add(eastPortal);
+    portals.push({ id: 'moonpetal', group: eastPortal, targetZone: 'moonpetal-basin' });
   }
 
   function createTree(x, z, scale = 1) {
@@ -604,6 +713,26 @@
     dir.shadow.camera.top = 50;
     dir.shadow.camera.bottom = -50;
     scene.add(dir);
+  }
+
+  function setZone(zoneId) {
+    world.currentZone = zoneId;
+    if (zoneId === 'moonpetal-basin') {
+      scene.fog.color.setHex(0x140f24);
+      scene.fog.density = 0.015;
+      document.body.style.background = 'radial-gradient(circle at top, #24153d, #060711 60%)';
+      hud.dialogueBox.classList.remove('visible');
+      document.querySelector('#zone-card strong').textContent = 'MOONPETAL BASIN';
+      document.querySelector('#zone-card span').textContent = 'Biome nocturne · pétales lunaires et chasse plus dense';
+      showToast('Zone changée: Moonpetal Basin');
+    } else {
+      scene.fog.color.setHex(0x09121f);
+      scene.fog.density = 0.012;
+      document.body.style.background = 'radial-gradient(circle at top, #10213a, #050914 58%)';
+      document.querySelector('#zone-card strong').textContent = 'WHISPERING GROVE';
+      document.querySelector('#zone-card span').textContent = 'Phase 4 lite · inventaire, loot réel, nouveau monstre, PNJ';
+      showToast('Retour: Whispering Grove');
+    }
   }
 
   function createPlayer() {
@@ -1138,19 +1267,23 @@
       updateQuest();
       showToast('Lys: nettoie le bosquet et reviens me voir.');
       addLog('Lys te confie une vraie mission. Enfin un peu de MMO.');
+      setDialogue('LYS', 'Le bosquet saigne. Coupe les wisps corrompus et les loups ronces, puis reviens avec leurs trophées.');
     } else if (world.questState === 'returnToLys' && hasQuestObjectives()) {
       world.questState = 'completed';
       addItem('groveCharm', 1);
       grantXp(48, 'quête de Lys');
       showToast('Quête terminée: Lys te confie un Charme du bosquet.');
       addLog('Lys: ce charme est à toi. Le bosquet se souviendra.');
+      setDialogue('LYS', 'Tu as calmé la forêt. Prends ce charme, et traverse le portail à l’est quand tu seras prêt.');
       playerState.maxMana += 10;
       playerState.mana = playerState.maxMana;
       updateQuest();
     } else if (world.questState === 'completed') {
       showToast('Lys: continue, le bosquet a encore faim de héros.');
+      setDialogue('LYS', 'Le portail cyan mène à Moonpetal Basin. Le prochain vrai morceau du monde est là-bas.');
     } else {
       showToast('Lys: il reste encore des bêtes à purger.');
+      setDialogue('LYS', 'Ne reviens pas les mains vides. Il manque encore des wisps ou des loups ronces.');
     }
     return true;
   }
@@ -1169,6 +1302,12 @@
       .filter(([, amount]) => amount > 0)
       .map(([itemId, amount]) => `<li><strong>${ITEM_DEFS[itemId]?.name || itemId}</strong><span>x${amount}</span></li>`)
       .join('') || '<li><span>Vide pour l’instant.</span><span>—</span></li>';
+
+    syncEquipmentFromInventory();
+    hud.equipWeapon.textContent = world.equipment.weapon || 'Aucune';
+    hud.equipRelic.textContent = world.equipment.relic || 'Aucune';
+    hud.equipCharm.textContent = world.equipment.charm || 'Aucun';
+    hud.equipTrophy.textContent = world.equipment.trophy || 'Vide';
 
     const target = getSelectedTarget();
     if (target) {
@@ -1193,8 +1332,12 @@
     raycaster.setFromCamera(pointer, camera);
     const intersects = raycaster.intersectObjects(mobs.filter(m => m.alive).map(m => m.group), true);
     if (!intersects.length) return;
-    const root = intersects[0].object.parent;
-    const found = mobs.find(mob => mob.group === root || mob.group.children.includes(intersects[0].object));
+    let node = intersects[0].object;
+    let found = null;
+    while (node && !found) {
+      found = mobs.find(mob => mob.group === node);
+      node = node.parent;
+    }
     if (found) setTarget(found);
   }
 
@@ -1243,6 +1386,15 @@
 
     player.position.x = Math.max(-28, Math.min(28, player.position.x));
     player.position.z = Math.max(-28, Math.min(28, player.position.z));
+
+    portals.forEach(portal => {
+      if (portal.group.position.distanceTo(player.position) < 2.4) {
+        if (portal.targetZone === 'moonpetal-basin' && world.currentZone !== 'moonpetal-basin') {
+          setZone('moonpetal-basin');
+          player.position.set(-22, 0, 0);
+        }
+      }
+    });
 
     if ((keys['Space']) && playerState.grounded) {
       playerState.velocityY = 0.26;
@@ -1297,7 +1449,8 @@
         mob.tail.rotation.z = Math.sin(elapsed * 2.6 + mob.timeOffset) * 0.22;
       } else {
         mob.group.position.y = Math.sin(elapsed * 5 + mob.timeOffset) * 0.05;
-        mob.group.rotation.y += delta * 0.6;
+        const wobble = Math.sin(elapsed * 8 + mob.timeOffset) * 0.15;
+        mob.group.rotation.z = wobble;
       }
       mob.attackCooldown = Math.max(0, mob.attackCooldown - delta);
       mob.castCooldown = Math.max(0, mob.castCooldown - delta);
@@ -1309,6 +1462,7 @@
         if (distance > mob.attackRange) {
           dir.normalize();
           mob.group.position.addScaledVector(dir, mob.speed * delta);
+          if (mob.family === 'wolf') mob.group.rotation.y = Math.atan2(dir.x, dir.z);
         } else if (mob.attackCooldown <= 0) {
           mob.attackCooldown = mob.family === 'wolf' ? 1.05 + Math.random() * 0.2 : 1.6 + Math.random() * 0.35;
           spawnImpactBurst(player.position.clone(), mob.family === 'wolf' ? 0xf59e0b : mob.core.material.color.getHex(), mob.family === 'wolf' ? 1.6 : 1.2);
@@ -1384,6 +1538,7 @@
         world.soul += 2;
         grantXp(8, 'orbe d’âme');
         orb.lootItems.forEach(item => addItem(item.itemId, item.amount));
+        syncEquipmentFromInventory();
         spawnFloatingText('+2 âmes', orb.mesh.position.clone(), 'loot-pop');
         addLog('Tu absorbes une orbe d’âme.');
         scene.remove(orb.mesh);
@@ -1462,7 +1617,8 @@
 
   updateQuest();
   addLog('Le bosquet respire. Lys t’attend près du sanctuaire.');
-  showToast('Phase 4 lite: inventaire, loot, nouveau monstre, PNJ.');
+  setDialogue('LYS', 'Approche, voyageur. Le bosquet a besoin d’une lame et d’un peu de nerf.', 5);
+  showToast('Phase 5 lite: ciblage corrigé, équipement, dialogue, biome suivant.');
   camera.position.set(0, 5.4, 19);
   camera.lookAt(player.position.x, player.position.y + 1.8, player.position.z);
   animate();
