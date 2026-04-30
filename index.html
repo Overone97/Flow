@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Flow - 0.2.0</title>
+<title>Flow - 0.3.0</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -259,8 +259,8 @@
 </head>
 <body>
 <div id="hud">
-  <div id="version" class="glass">FLOW v0.2.0</div>
-  <div id="zone-card" class="glass"><strong>WHISPERING GROVE</strong><span>Phase 2 · impacts, bursts, morts plus propres, caméra corrigée</span></div>
+  <div id="version" class="glass">FLOW v0.3.0</div>
+  <div id="zone-card" class="glass"><strong>WHISPERING GROVE</strong><span>Phase 3 lite · caméra full inversée, XP, level up, progression</span></div>
   <div id="quest-card" class="glass">
     <h2>OBJECTIF</h2>
     <p>Purifie le bosquet en éliminant <strong id="quest-progress">0 / 3</strong> wisps corrompus.</p>
@@ -284,6 +284,8 @@
       </div>
       <div class="bar"><span id="player-hp-fill" class="hp-fill" style="transform:scaleX(1)"></span></div>
       <div class="bar"><span id="player-mana-fill" class="mana-fill" style="transform:scaleX(1)"></span></div>
+      <div style="display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--muted)"><small>XP</small><small id="xp-text">0 / 60</small></div>
+      <div class="bar"><span id="xp-fill" class="mana-fill" style="transform:scaleX(0)"></span></div>
     </div>
     <div id="skill-bar">
       <div class="skill glass" id="skill-basic"><span class="skill-key">CLIC</span><span class="skill-name">Flow Slash</span><small>attaque de base au contact</small></div>
@@ -316,6 +318,8 @@
     playerManaText: document.getElementById('player-mana-text'),
     soulText: document.getElementById('soul-text'),
     levelText: document.getElementById('level-text'),
+    xpText: document.getElementById('xp-text'),
+    xpFill: document.getElementById('xp-fill'),
     targetFrame: document.getElementById('target-frame'),
     targetName: document.getElementById('target-name'),
     targetType: document.getElementById('target-type'),
@@ -354,6 +358,8 @@
     toastTimer: 0,
     soul: 0,
     kills: 0,
+    xp: 0,
+    xpToNext: 60,
     level: 1,
     selectedTargetId: null,
     targetSwitchTimer: 0,
@@ -712,6 +718,27 @@
     if (world.kills >= 3) showToast('Phase 1 validée: la boucle de base tient déjà debout.');
   }
 
+  function grantXp(amount, source = 'progression') {
+    world.xp += amount;
+    addLog(`+${amount} XP (${source}).`);
+
+    while (world.xp >= world.xpToNext) {
+      world.xp -= world.xpToNext;
+      world.level += 1;
+      world.xpToNext = Math.round(world.xpToNext * 1.35);
+      playerState.maxHp += 18;
+      playerState.maxMana += 14;
+      playerState.basicDamage += 3;
+      playerState.hp = playerState.maxHp;
+      playerState.mana = playerState.maxMana;
+      spawnNovaBurst(player.position.clone().add(new THREE.Vector3(0, 1.6, 0)), 0xfcd34d, 2.1);
+      spawnFloatingText(`Niv. ${world.level}`, player.position.clone().add(new THREE.Vector3(0, 3.1, 0)), 'loot-pop');
+      showToast(`Level up ! Niveau ${world.level}.`);
+      addLog(`Tu passes niveau ${world.level}. Plus de PV, mana et dégâts.`);
+      triggerShake(0.18);
+    }
+  }
+
   createMoonAndLights();
   createGround();
   for (let i = 0; i < 44; i += 1) {
@@ -790,6 +817,7 @@
       createLootOrb(mob.group.position);
       world.soul += mob.lootValue;
       world.kills += 1;
+      grantXp(22, mob.name);
       updateQuest();
       spawnNovaBurst(mob.group.position.clone().add(new THREE.Vector3(0, 1.1, 0)), mob.core.material.color.getHex(), 1.8);
       spawnImpactBurst(mob.group.position.clone(), mob.core.material.color.getHex(), 2.1);
@@ -895,6 +923,8 @@
     hud.playerManaText.textContent = `${Math.round(playerState.mana)} / ${playerState.maxMana}`;
     hud.soulText.textContent = world.soul;
     hud.levelText.textContent = world.level;
+    hud.xpText.textContent = `${Math.round(world.xp)} / ${world.xpToNext}`;
+    hud.xpFill.style.transform = `scaleX(${Math.max(0, Math.min(1, world.xp / world.xpToNext))})`;
 
     const target = getSelectedTarget();
     if (target) {
@@ -938,7 +968,7 @@
   document.addEventListener('keyup', event => { keys[event.code] = false; });
   document.addEventListener('mousemove', event => {
     world.mouseLookX -= event.movementX * 0.0024;
-    world.mouseLookY = Math.max(-0.78, Math.min(0.12, world.mouseLookY + event.movementY * 0.0018));
+    world.mouseLookY = Math.max(-0.78, Math.min(0.12, world.mouseLookY - event.movementY * 0.0018));
   });
   renderer.domElement.addEventListener('click', event => {
     renderer.domElement.requestPointerLock();
@@ -1100,6 +1130,7 @@
       orb.mesh.position.y = 0.8 + Math.sin(elapsed * 3 + i) * 0.12;
       if (orb.mesh.position.distanceTo(player.position) < 1.7) {
         world.soul += 2;
+        grantXp(8, 'orbe d’âme');
         spawnFloatingText('+2 âmes', orb.mesh.position.clone(), 'loot-pop');
         addLog('Tu absorbes une orbe d’âme.');
         scene.remove(orb.mesh);
@@ -1178,7 +1209,7 @@
 
   updateQuest();
   addLog('Le bosquet respire. À toi de le nettoyer.');
-  showToast('Phase 2: la caméra vise mieux, et les impacts cognent enfin.');
+  showToast('Phase 3 lite: caméra full inversée, XP et level up en place.');
   camera.position.set(0, 5.4, 19);
   camera.lookAt(player.position.x, player.position.y + 1.8, player.position.z);
   animate();
