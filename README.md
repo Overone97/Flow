@@ -3,7 +3,7 @@
 Prototype web 3D orienté **vertical slice MMORPG light**.
 
 ## Version
-- `0.2.0` — phase 2 game feel
+- `0.3.0` — phase 3 lite
 
 ## Ce qu'il y a dedans
 - 1 zone jouable : **Whispering Grove**
@@ -17,7 +17,8 @@ Prototype web 3D orienté **vertical slice MMORPG light**.
 - sanctuaire de soin
 - HUD combat / quête / log
 - impacts visuels, bursts et morts plus lisibles
-- axe caméra horizontal inversé pour une visée plus naturelle
+- axe caméra horizontal + vertical inversé pour une visée plus naturelle
+- XP, niveau, montée de stats de base
 
 ## Lancer
 ```bash
