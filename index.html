@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Flow - 0.1.0</title>
+<title>Flow - 0.2.0</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -236,6 +236,13 @@
     letter-spacing: 0.06em;
   }
   #toast.visible { opacity: 1; }
+  #hit-flash {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle, rgba(248,113,113,0.14), rgba(127,29,29,0.24));
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
   @keyframes floatUp {
     0% { opacity: 0; transform: translate(-50%, 0); }
     15% { opacity: 1; }
@@ -252,8 +259,8 @@
 </head>
 <body>
 <div id="hud">
-  <div id="version" class="glass">FLOW v0.1.0</div>
-  <div id="zone-card" class="glass"><strong>WHISPERING GROVE</strong><span>Vertical slice phase 1 · explore, cible, combat, loot</span></div>
+  <div id="version" class="glass">FLOW v0.2.0</div>
+  <div id="zone-card" class="glass"><strong>WHISPERING GROVE</strong><span>Phase 2 · impacts, bursts, morts plus propres, caméra corrigée</span></div>
   <div id="quest-card" class="glass">
     <h2>OBJECTIF</h2>
     <p>Purifie le bosquet en éliminant <strong id="quest-progress">0 / 3</strong> wisps corrompus.</p>
@@ -266,6 +273,7 @@
   </div>
   <div id="crosshair"></div>
   <div id="toast"></div>
+  <div id="hit-flash"></div>
   <div id="bottom-ui">
     <div id="resource-frame" class="glass">
       <div id="resource-row">
@@ -314,6 +322,7 @@
     targetHp: document.getElementById('target-hp'),
     questProgress: document.getElementById('quest-progress'),
     toast: document.getElementById('toast'),
+    hitFlash: document.getElementById('hit-flash'),
     logList: document.getElementById('log-list'),
     skillBasic: document.getElementById('skill-basic'),
     skillQ: document.getElementById('skill-q'),
@@ -348,6 +357,8 @@
     level: 1,
     selectedTargetId: null,
     targetSwitchTimer: 0,
+    cameraShake: 0,
+    hitFlash: 0,
     lastTime: performance.now(),
   };
 
@@ -366,6 +377,7 @@
   const keys = {};
   const hostileProjectiles = [];
   const friendlyProjectiles = [];
+  const effectBursts = [];
   const mobs = [];
   const lootOrbs = [];
   const clock = new THREE.Clock();
@@ -397,6 +409,45 @@
     el.style.top = `${y}px`;
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 900);
+  }
+
+  function spawnImpactBurst(position, color = 0xffffff, scale = 1) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.35, 0.55, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.copy(position);
+    ring.position.y += 0.06;
+    scene.add(ring);
+    effectBursts.push({ mesh: ring, type: 'ring', age: 0, maxAge: 0.35, scale });
+  }
+
+  function spawnNovaBurst(position, color = 0xc084fc, scale = 1.2) {
+    const burst = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.45, 1),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+    );
+    burst.position.copy(position);
+    scene.add(burst);
+    effectBursts.push({ mesh: burst, type: 'nova', age: 0, maxAge: 0.45, scale });
+  }
+
+  function spawnSlashArc(fromPosition, toPosition) {
+    const slash = new THREE.Mesh(
+      new THREE.TorusGeometry(0.95, 0.08, 8, 32, Math.PI * 0.75),
+      new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.9 })
+    );
+    slash.position.copy(fromPosition).lerp(toPosition, 0.58);
+    slash.position.y += 1.05;
+    slash.lookAt(toPosition.x, slash.position.y, toPosition.z);
+    slash.rotateY(Math.PI * 0.5);
+    scene.add(slash);
+    effectBursts.push({ mesh: slash, type: 'slash', age: 0, maxAge: 0.25, scale: 1 });
+  }
+
+  function triggerShake(amount = 0.2) {
+    world.cameraShake = Math.max(world.cameraShake, amount);
   }
 
   function createGround() {
@@ -740,17 +791,23 @@
       world.soul += mob.lootValue;
       world.kills += 1;
       updateQuest();
-      addLog(`${mob.name} se dissipe en poussière astrale.`);
+      spawnNovaBurst(mob.group.position.clone().add(new THREE.Vector3(0, 1.1, 0)), mob.core.material.color.getHex(), 1.8);
+      spawnImpactBurst(mob.group.position.clone(), mob.core.material.color.getHex(), 2.1);
+      addLog(`${mob.name} explose en poussière astrale.`);
       showToast(`+${mob.lootValue} âme · ${mob.name} vaincu`);
+      triggerShake(0.22);
       if (world.selectedTargetId === mob.id) setTarget(null);
     }
   }
 
   function applyDamageToPlayer(damage, cause) {
     playerState.hp = Math.max(0, playerState.hp - damage);
+    hud.hitFlash.style.opacity = '1';
+    world.hitFlash = 0.18;
+    triggerShake(0.14);
     spawnFloatingText(`-${damage}`, player.position.clone().add(new THREE.Vector3(0, 2.6, 0)), 'damage-pop');
     addLog(`${cause} te frappe pour ${damage}.`);
-    if (playerState.hp <= 0) {
+  if (playerState.hp <= 0) {
       playerState.hp = playerState.maxHp;
       playerState.mana = playerState.maxMana;
       player.position.set(0, 0, 10);
@@ -767,6 +824,9 @@
     if (distance > 2.6) return showToast('Trop loin pour Flow Slash.');
     world.attackTimer = 0.62;
     playerState.castingTimer = 0.18;
+    spawnSlashArc(player.position.clone(), target.group.position.clone());
+    spawnImpactBurst(target.group.position.clone(), 0x7dd3fc, 1.2);
+    triggerShake(0.1);
     applyDamageToMob(target, playerState.basicDamage, 'Flow Slash');
   }
 
@@ -777,9 +837,14 @@
     playerState.castingTimer = 0.28;
     let hits = 0;
     mobs.filter(mob => mob.alive && mob.group.position.distanceTo(player.position) < 3.6).forEach(mob => {
+      spawnImpactBurst(mob.group.position.clone(), 0xc084fc, 1.6);
       applyDamageToMob(mob, 18, 'Arc Pulse');
       hits += 1;
     });
+    if (hits) {
+      spawnNovaBurst(player.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 0xc084fc, 1.6);
+      triggerShake(0.12);
+    }
     if (!hits) showToast('Arc Pulse tranche le vide.');
     else showToast(`Arc Pulse touche ${hits} cible${hits > 1 ? 's' : ''}.`);
   }
@@ -797,7 +862,7 @@
     );
     projectile.position.copy(player.position).add(new THREE.Vector3(0, 1.9, 0));
     scene.add(projectile);
-    friendlyProjectiles.push({ mesh: projectile, targetId: target.id, speed: 18, damage: 24, life: 1.2 });
+    friendlyProjectiles.push({ mesh: projectile, targetId: target.id, speed: 18, damage: 24, life: 1.2, pulse: 0 });
     addLog('Star Bolt fend la brume.');
   }
 
@@ -808,6 +873,7 @@
     playerState.castingTimer = 0.36;
     playerState.hp = Math.min(playerState.maxHp, playerState.hp + 24);
     playerState.mana = Math.min(playerState.maxMana, playerState.mana + 10);
+    spawnNovaBurst(player.position.clone().add(new THREE.Vector3(0, 1.6, 0)), 0x86efac, 1.5);
     spawnFloatingText('+24', player.position.clone().add(new THREE.Vector3(0, 2.6, 0)), 'heal-pop');
     addLog('Sanctify recolle un peu ton âme.');
     showToast('Sanctify te soigne.');
@@ -871,7 +937,7 @@
   });
   document.addEventListener('keyup', event => { keys[event.code] = false; });
   document.addEventListener('mousemove', event => {
-    world.mouseLookX += event.movementX * 0.0024;
+    world.mouseLookX -= event.movementX * 0.0024;
     world.mouseLookY = Math.max(-0.78, Math.min(0.12, world.mouseLookY + event.movementY * 0.0018));
   });
   renderer.domElement.addEventListener('click', event => {
@@ -929,9 +995,12 @@
     const camX = player.position.x - Math.sin(world.mouseLookX) * world.cameraDistance;
     const camZ = player.position.z - Math.cos(world.mouseLookX) * world.cameraDistance;
     const camY = player.position.y + 5.3 - world.mouseLookY * 6.4;
-    camera.position.x += (camX - camera.position.x) * 0.08;
-    camera.position.y += (camY - camera.position.y) * 0.08;
-    camera.position.z += (camZ - camera.position.z) * 0.08;
+    const shakeX = (Math.random() - 0.5) * world.cameraShake;
+    const shakeY = (Math.random() - 0.5) * world.cameraShake * 0.6;
+    const shakeZ = (Math.random() - 0.5) * world.cameraShake;
+    camera.position.x += (camX + shakeX - camera.position.x) * 0.08;
+    camera.position.y += (camY + shakeY - camera.position.y) * 0.08;
+    camera.position.z += (camZ + shakeZ - camera.position.z) * 0.08;
     camera.lookAt(player.position.x, player.position.y + 1.8, player.position.z);
   }
 
@@ -971,7 +1040,7 @@
           );
           projectile.position.copy(mob.group.position).add(new THREE.Vector3(0, 0.4, 0));
           scene.add(projectile);
-          hostileProjectiles.push({ mesh: projectile, fromId: mob.id, speed: 11, damage: 9, life: 1.4 });
+          hostileProjectiles.push({ mesh: projectile, fromId: mob.id, speed: 11, damage: 9, life: 1.4, pulse: 0 });
         }
       } else {
         mob.group.position.lerp(mob.leash, 0.02);
@@ -983,6 +1052,8 @@
     for (let i = friendlyProjectiles.length - 1; i >= 0; i -= 1) {
       const projectile = friendlyProjectiles[i];
       projectile.life -= delta;
+      projectile.pulse += delta * 18;
+      projectile.mesh.scale.setScalar(1 + Math.sin(projectile.pulse) * 0.16);
       const target = mobs.find(mob => mob.id === projectile.targetId && mob.alive);
       if (!target || projectile.life <= 0) {
         scene.remove(projectile.mesh);
@@ -992,6 +1063,8 @@
       const dir = new THREE.Vector3().subVectors(target.group.position.clone().add(new THREE.Vector3(0, 0.4, 0)), projectile.mesh.position).normalize();
       projectile.mesh.position.addScaledVector(dir, projectile.speed * delta);
       if (projectile.mesh.position.distanceTo(target.group.position) < 0.9) {
+        spawnNovaBurst(target.group.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0x7dd3fc, 1.1);
+        spawnImpactBurst(target.group.position.clone(), 0x7dd3fc, 1.4);
         applyDamageToMob(target, projectile.damage, 'Star Bolt');
         scene.remove(projectile.mesh);
         friendlyProjectiles.splice(i, 1);
@@ -1001,6 +1074,8 @@
     for (let i = hostileProjectiles.length - 1; i >= 0; i -= 1) {
       const projectile = hostileProjectiles[i];
       projectile.life -= delta;
+      projectile.pulse += delta * 16;
+      projectile.mesh.scale.setScalar(1 + Math.sin(projectile.pulse) * 0.12);
       if (projectile.life <= 0) {
         scene.remove(projectile.mesh);
         hostileProjectiles.splice(i, 1);
@@ -1009,6 +1084,7 @@
       const dir = new THREE.Vector3().subVectors(player.position.clone().add(new THREE.Vector3(0, 1.6, 0)), projectile.mesh.position).normalize();
       projectile.mesh.position.addScaledVector(dir, projectile.speed * delta);
       if (projectile.mesh.position.distanceTo(player.position) < 1.1) {
+        spawnImpactBurst(player.position.clone(), projectile.mesh.material.color.getHex(), 1.2);
         applyDamageToPlayer(projectile.damage, 'Orbe corrompue');
         scene.remove(projectile.mesh);
         hostileProjectiles.splice(i, 1);
@@ -1032,6 +1108,28 @@
     }
   }
 
+  function updateEffects(delta) {
+    for (let i = effectBursts.length - 1; i >= 0; i -= 1) {
+      const effect = effectBursts[i];
+      effect.age += delta;
+      const t = effect.age / effect.maxAge;
+      if (effect.type === 'ring') {
+        effect.mesh.scale.setScalar(1 + t * effect.scale * 2.4);
+      } else if (effect.type === 'nova') {
+        effect.mesh.scale.setScalar(1 + t * effect.scale * 1.8);
+        effect.mesh.rotation.y += delta * 4;
+      } else if (effect.type === 'slash') {
+        effect.mesh.scale.setScalar(1 + t * 0.7);
+        effect.mesh.rotation.z += delta * 7;
+      }
+      effect.mesh.material.opacity = Math.max(0, 1 - t);
+      if (effect.age >= effect.maxAge) {
+        scene.remove(effect.mesh);
+        effectBursts.splice(i, 1);
+      }
+    }
+  }
+
   function regenerate(delta) {
     playerState.mana = Math.min(playerState.maxMana, playerState.mana + delta * 8);
     world.attackTimer = Math.max(0, world.attackTimer - delta);
@@ -1039,7 +1137,14 @@
     world.eCooldown = Math.max(0, world.eCooldown - delta);
     world.rCooldown = Math.max(0, world.rCooldown - delta);
     world.targetSwitchTimer = Math.max(0, world.targetSwitchTimer - delta);
+    world.cameraShake = Math.max(0, world.cameraShake - delta * 0.9);
     playerState.castingTimer = Math.max(0, playerState.castingTimer - delta);
+    if (world.hitFlash > 0) {
+      world.hitFlash = Math.max(0, world.hitFlash - delta);
+      hud.hitFlash.style.opacity = `${Math.min(1, world.hitFlash * 5)}`;
+    } else {
+      hud.hitFlash.style.opacity = '0';
+    }
     if (world.toastTimer > 0) {
       world.toastTimer -= delta;
       if (world.toastTimer <= 0) hud.toast.classList.remove('visible');
@@ -1057,6 +1162,7 @@
     updateMobs(delta, elapsed);
     updateProjectiles(delta);
     updateLoot(delta, elapsed);
+    updateEffects(delta);
     regenerate(delta);
     updateHud();
 
@@ -1072,7 +1178,7 @@
 
   updateQuest();
   addLog('Le bosquet respire. À toi de le nettoyer.');
-  showToast('Phase 1: explore, cible, combat, loot.');
+  showToast('Phase 2: la caméra vise mieux, et les impacts cognent enfin.');
   camera.position.set(0, 5.4, 19);
   camera.lookAt(player.position.x, player.position.y + 1.8, player.position.z);
   animate();
