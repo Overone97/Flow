@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flow - 0.0.1</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #0a0a1a; font-family: 'Segoe UI', sans-serif; }
+canvas { display: block; }
+
+#hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#version {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  color: #a8d8ea;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-shadow: 0 0 10px rgba(168, 216, 234, 0.5);
+  opacity: 0.9;
+}
+
+#controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+  text-align: center;
+}
+
+#hp-bar {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 8px;
+  background: rgba(0,0,0,0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+#hp-fill {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #ff6b6b, #ffa8a8);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 50%;
+}
+
+#enemy-indicator {
+  position: absolute;
+  top: 80px;
+  right: 20px;
+  color: #ff6b6b;
+  font-size: 13px;
+  text-align: right;
+}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="version">FLOW v0.0.1</div>
+  <div id="crosshair"></div>
+  <div id="hp-bar"><div id="hp-fill"></div></div>
+  <div id="controls">WASD / ZQSD : Move &nbsp;|&nbsp; Mouse : Camera &nbsp;|&nbsp; Space : Jump</div>
+  <div id="enemy-indicator">⚔ Guardian of the Grove</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x1a1a2e, 0.015);
+
+  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+  document.body.appendChild(renderer.domElement);
+
+  const ambientLight = new THREE.AmbientLight(0x8899bb, 0.6);
+  scene.add(ambientLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffeedd, 1.0);
+  dirLight.position.set(30, 50, 20);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048;
+  dirLight.shadow.mapSize.height = 2048;
+  dirLight.shadow.camera.near = 0.5;
+  dirLight.shadow.camera.far = 200;
+  dirLight.shadow.camera.left = -60;
+  dirLight.shadow.camera.right = 60;
+  dirLight.shadow.camera.top = 60;
+  dirLight.shadow.camera.bottom = -60;
+  scene.add(dirLight);
+
+  const hemiLight = new THREE.HemisphereLight(0x88aacc, 0x445533, 0.4);
+  scene.add(hemiLight);
+
+  const groundGeo = new THREE.PlaneGeometry(200, 200, 50, 50);
+  const groundMat = new THREE.MeshStandardMaterial({
+    color: 0x3d6b4a,
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const pathGeo = new THREE.PlaneGeometry(6, 100);
+  const pathMat = new THREE.MeshStandardMaterial({ color: 0x8b7355, roughness: 0.8 });
+  const path = new THREE.Mesh(pathGeo, pathMat);
+  path.rotation.x = -Math.PI / 2;
+  path.position.set(0, 0.01, 0);
+  path.receiveShadow = true;
+  scene.add(path);
+
+  function createTree(x, z) {
+    const group = new THREE.Group();
+    const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 3, 8);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c3d2e, roughness: 0.9 });
+    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+    trunk.castShadow = true;
+    trunk.position.y = 1.5;
+    group.add(trunk);
+
+    const leafGeo = new THREE.SphereGeometry(2, 8, 6);
+    const leafMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color().setHSL(0.25 + Math.random() * 0.1, 0.6, 0.35),
+      roughness: 0.8,
+    });
+    const leaves = new THREE.Mesh(leafGeo, leafMat);
+    leaves.castShadow = true;
+    leaves.position.y = 4;
+    leaves.scale.y = 1.2;
+    group.add(leaves);
+
+    group.position.set(x, 0, z);
+    group.scale.setScalar(0.8 + Math.random() * 0.5);
+    return group;
+  }
+
+  for (let i = 0; i < 40; i++) {
+    const angle = (i / 40) * Math.PI * 2;
+    const r = 15 + Math.random() * 35;
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    if (Math.abs(x) < 4 && Math.abs(z) < 50) continue;
+    scene.add(createTree(x, z));
+  }
+
+  function createRock(x, z, scale) {
+    const geo = new THREE.DodecahedronGeometry(1, 1);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x667788, roughness: 0.9 });
+    const rock = new THREE.Mesh(geo, mat);
+    rock.position.set(x, scale * 0.5, z);
+    rock.scale.setScalar(scale);
+    rock.rotation.set(Math.random(), Math.random(), Math.random());
+    rock.castShadow = true;
+    scene.add(rock);
+  }
+
+  createRock(-8, 10, 1.5);
+  createRock(12, -15, 1.2);
+  createRock(-15, -20, 2);
+  createRock(20, 25, 1.8);
+
+  const player = new THREE.Group();
+  const bodyGeo = new THREE.CapsuleGeometry(0.4, 1.2, 8, 16);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x4a90d9, roughness: 0.6, metalness: 0.2 });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.castShadow = true;
+  body.position.y = 1.2;
+  player.add(body);
+
+  const headGeo = new THREE.SphereGeometry(0.35, 16, 12);
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xf5d0a9, roughness: 0.7 });
+  const head = new THREE.Mesh(headGeo, headMat);
+  head.castShadow = true;
+  head.position.y = 2.3;
+  player.add(head);
+
+  const hairGeo = new THREE.SphereGeometry(0.38, 8, 6);
+  const hairMat = new THREE.MeshStandardMaterial({ color: 0x2c1810, roughness: 0.8 });
+  const hair = new THREE.Mesh(hairGeo, hairMat);
+  hair.position.y = 2.5;
+  hair.scale.y = 0.6;
+  player.add(hair);
+
+  const swordGeo = new THREE.BoxGeometry(0.1, 1.5, 0.05);
+  const swordMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.3 });
+  const sword = new THREE.Mesh(swordGeo, swordMat);
+  sword.position.set(0.6, 1.5, 0);
+  sword.rotation.z = -0.3;
+  player.add(sword);
+
+  player.position.set(0, 0, 5);
+  scene.add(player);
+
+  const enemy = new THREE.Group();
+  const eBodyGeo = new THREE.CapsuleGeometry(0.6, 1.5, 8, 16);
+  const eBodyMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.5, metalness: 0.3 });
+  const eBody = new THREE.Mesh(eBodyGeo, eBodyMat);
+  eBody.castShadow = true;
+  eBody.position.y = 1.4;
+  enemy.add(eBody);
+
+  const eHeadGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+  const eHeadMat = new THREE.MeshStandardMaterial({ color: 0x550000, roughness: 0.6 });
+  const eHead = new THREE.Mesh(eHeadGeo, eHeadMat);
+  eHead.castShadow = true;
+  eHead.position.y = 2.6;
+  enemy.add(eHead);
+
+  const hornGeo = new THREE.ConeGeometry(0.1, 0.6, 4);
+  const hornMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.7 });
+  const horn1 = new THREE.Mesh(hornGeo, hornMat);
+  horn1.position.set(-0.3, 3.1, 0);
+  horn1.rotation.z = -0.3;
+  enemy.add(horn1);
+  const horn2 = new THREE.Mesh(hornGeo, hornMat);
+  horn2.position.set(0.3, 3.1, 0);
+  horn2.rotation.z = 0.3;
+  enemy.add(horn2);
+
+  const axeGeo = new THREE.BoxGeometry(0.15, 2, 0.1);
+  const axeMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
+  const axe = new THREE.Mesh(axeGeo, axeMat);
+  axe.position.set(-0.8, 1.6, 0);
+  enemy.add(axe);
+
+  enemy.position.set(0, 0, -15);
+  scene.add(enemy);
+
+  const shrineGeo = new THREE.CylinderGeometry(1.5, 2, 3, 8);
+  const shrineMat = new THREE.MeshStandardMaterial({
+    color: 0xdda0dd,
+    roughness: 0.4,
+    metalness: 0.5,
+    emissive: 0x441144,
+    emissiveIntensity: 0.3,
+  });
+  const shrine = new THREE.Mesh(shrineGeo, shrineMat);
+  shrine.castShadow = true;
+  shrine.position.set(15, 1.5, 10);
+  scene.add(shrine);
+
+  const shrineLight = new THREE.PointLight(0xdda0dd, 1, 10);
+  shrineLight.position.set(15, 4, 10);
+  scene.add(shrineLight);
+
+  camera.position.set(0, 8, 12);
+  camera.lookAt(player.position);
+
+  const keys = {};
+  let mouseX = 0, mouseY = 0;
+  let cameraAngle = 0;
+  let cameraHeight = 8;
+  let cameraDistance = 12;
+
+  document.addEventListener('keydown', e => { keys[e.code] = true; });
+  document.addEventListener('keyup', e => { keys[e.code] = false; });
+  document.addEventListener('mousemove', e => {
+    mouseX += e.movementX * 0.002;
+    mouseY = Math.max(-1, Math.min(1, mouseY + e.movementY * 0.002));
+  });
+
+  renderer.domElement.addEventListener('click', () => {
+    renderer.domElement.requestPointerLock();
+  });
+
+  let velocityY = 0;
+  const gravity = -0.015;
+  let isGrounded = true;
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const speed = 0.15;
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+    if (keys['KeyW'] || keys['KeyZ']) {
+      player.position.addScaledVector(forward, speed);
+    }
+    if (keys['KeyS']) {
+      player.position.addScaledVector(forward, -speed);
+    }
+    if (keys['KeyA'] || keys['KeyQ']) {
+      player.position.addScaledVector(right, -speed);
+    }
+    if (keys['KeyD']) {
+      player.position.addScaledVector(right, speed);
+    }
+    if (keys['Space'] && isGrounded) {
+      velocityY = 0.3;
+      isGrounded = false;
+    }
+
+    velocityY += gravity;
+    player.position.y += velocityY;
+    if (player.position.y <= 0) {
+      player.position.y = 0;
+      velocityY = 0;
+      isGrounded = true;
+    }
+
+    if (forward.x !== 0 || forward.z !== 0) {
+      player.rotation.y = Math.atan2(forward.x, forward.z);
+    }
+
+    cameraAngle = mouseX;
+    cameraHeight = 8 - mouseY * 4;
+    cameraDistance = 12;
+
+    const camX = player.position.x - Math.sin(cameraAngle) * cameraDistance;
+    const camZ = player.position.z - Math.cos(cameraAngle) * cameraDistance;
+    camera.position.x += (camX - camera.position.x) * 0.08;
+    camera.position.y += (player.position.y + cameraHeight - camera.position.y) * 0.08;
+    camera.position.z += (camZ - camera.position.z) * 0.08;
+    camera.lookAt(player.position.x, player.position.y + 1.5, player.position.z);
+
+    enemy.rotation.y += 0.01;
+    const distToPlayer = enemy.position.distanceTo(player.position);
+    if (distToPlayer < 20) {
+      const dir = new THREE.Vector3().subVectors(player.position, enemy.position).normalize();
+      enemy.position.addScaledVector(dir, 0.02);
+    }
+
+    shrine.rotation.y += 0.005;
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+})();
+</script>
+</body>
+</html>
